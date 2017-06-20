@@ -428,6 +428,10 @@ class ViewControllerTest extends TestCase {
 			->with('files_trashbin')
 			->will($this->returnValue(true));
 
+		$this->rootFolder->expects($this->any())
+			->method('nodeExists')
+			->will($this->returnValue(true));
+
 		$parentNode = $this->createMock('\OCP\Files\Folder');
 		$parentNode->expects($this->once())
 			->method('getPath')
