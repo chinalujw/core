@@ -28,6 +28,7 @@ use OCP\Files\StorageNotAvailableException;
 use Sabre\DAV\Exception\InsufficientStorage;
 use Sabre\DAV\Exception\ServiceUnavailable;
 use Sabre\HTTP\URLUtil;
+use OCA\DAV\Upload\FutureFile;
 
 /**
  * This plugin check user quota and deny creating files when they exceeds the quota.
@@ -50,11 +51,14 @@ class QuotaPlugin extends \Sabre\DAV\ServerPlugin {
 	 */
 	private $server;
 
+	private $newDavEndpoint;
+
 	/**
 	 * @param \OC\Files\View $view
 	 */
-	public function __construct($view) {
+	public function __construct($view, $newDavEndpoint = false) {
 		$this->view = $view;
+		$this->newDavEndpoint = $newDavEndpoint;
 	}
 
 	/**
@@ -74,20 +78,57 @@ class QuotaPlugin extends \Sabre\DAV\ServerPlugin {
 
 		$server->on('beforeWriteContent', [$this, 'checkQuota'], 10);
 		$server->on('beforeCreateFile', [$this, 'checkQuota'], 10);
+		if ($this->newDavEndpoint) {
+			$server->on('beforeMove', [$this, 'checkFutureFileQuota'], 10);
+		}
+	}
+
+	/**
+	 * Check if we're moving a Futurefile in which case we need to check
+	 * the quota on the target destination.
+	 *
+	 * @param string $source source path
+	 * @param string $destination destination path
+	 * @throws Forbidden
+	 * @throws NotFound
+	 */
+	public function checkFutureFileQuota($source, $destination) {
+		$sourceNode = $this->server->tree->getNodeForPath($source);
+		if (!$sourceNode instanceof FutureFile) {
+			return;
+		}
+
+		$this->checkQuota($destination, $sourceNode->getSize());
 	}
 
 	/**
 	 * This method is called before any HTTP method and validates there is enough free space to store the file
 	 *
 	 * @param string $uri
+	 * @param int $length size to check whether it fits
 	 * @throws InsufficientStorage
 	 * @return bool
 	 */
-	public function checkQuota($uri) {
-		$length = $this->getLength();
+	public function checkQuota($uri, $length = null) {
+		if ($length === null) {
+			$length = $this->getLength();
+		}
 		if ($length) {
+			// TODO: should really use the getNodeForPath() and the node instead...
 			if (substr($uri, 0, 1) !== '/') {
 				$uri = '/' . $uri;
+			}
+			if ($this->newDavEndpoint) {
+				// need to remove the prefix "/files/$user"
+				// note: duplicate slashes have been taken care of by Sabre already
+				$uri = explode('/', trim($uri, '/'));
+				if (count($uri) < 2 || $uri[0] !== 'files') {
+					// not the "files" endpoint
+					return;
+				}
+				array_shift($uri);
+				array_shift($uri);
+				$uri = '/' . implode('/', $uri);
 			}
 			list($parentUri, $newName) = URLUtil::splitPath($uri);
 			if(is_null($parentUri)) {
